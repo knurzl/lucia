@@ -64,7 +64,6 @@ export class Lucia<
   ) {
     this.adapter = adapter;
 
-    // we have to use `any` here since TS can't do conditional return types
     this.getUserAttributes = (databaseUserAttributes): any => {
       if (options && options.getUserAttributes) {
         return options.getUserAttributes(databaseUserAttributes);
@@ -99,8 +98,8 @@ export class Lucia<
     );
   }
 
-  public async getUserSessions(userId: UserId): Promise<Session[]> {
-    const databaseSessions = await this.adapter.getUserSessions(userId);
+  public async getUserSessions(userId: UserId, schema?: string): Promise<Session[]> {
+    const databaseSessions = await this.adapter.getUserSessions(userId, schema);
     const sessions: Session[] = [];
     for (const databaseSession of databaseSessions) {
       if (!isWithinExpirationDate(databaseSession.expiresAt)) {
@@ -118,18 +117,19 @@ export class Lucia<
   }
 
   public async validateSession(
-    sessionId: string
+    sessionId: string,
+    schema?: string
   ): Promise<{ user: User; session: Session } | { user: null; session: null }> {
-    const [databaseSession, databaseUser] = await this.adapter.getSessionAndUser(sessionId);
+    const [databaseSession, databaseUser] = await this.adapter.getSessionAndUser(sessionId, schema);
     if (!databaseSession) {
       return { session: null, user: null };
     }
     if (!databaseUser) {
-      await this.adapter.deleteSession(databaseSession.id);
+      await this.adapter.deleteSession(databaseSession.id, schema);
       return { session: null, user: null };
     }
     if (!isWithinExpirationDate(databaseSession.expiresAt)) {
-      await this.adapter.deleteSession(databaseSession.id);
+      await this.adapter.deleteSession(databaseSession.id, schema);
       return { session: null, user: null };
     }
     const activePeriodExpirationDate = new Date(
@@ -145,7 +145,7 @@ export class Lucia<
     if (!isWithinExpirationDate(activePeriodExpirationDate)) {
       session.fresh = true;
       session.expiresAt = createDate(this.sessionExpiresIn);
-      await this.adapter.updateSessionExpiration(databaseSession.id, session.expiresAt);
+      await this.adapter.updateSessionExpiration(databaseSession.id, session.expiresAt, schema);
     }
     const user: User = {
       ...this.getUserAttributes(databaseUser.attributes),
@@ -157,18 +157,22 @@ export class Lucia<
   public async createSession(
     userId: UserId,
     attributes: RegisteredDatabaseSessionAttributes,
+    schema?: string,
     options?: {
       sessionId?: string;
     }
   ): Promise<Session> {
     const sessionId = options?.sessionId ?? generateIdFromEntropySize(25);
     const sessionExpiresAt = createDate(this.sessionExpiresIn);
-    await this.adapter.setSession({
-      id: sessionId,
-      userId,
-      expiresAt: sessionExpiresAt,
-      attributes
-    });
+    await this.adapter.setSession(
+      {
+        id: sessionId,
+        userId,
+        expiresAt: sessionExpiresAt,
+        attributes
+      },
+      schema
+    );
     const session: Session = {
       id: sessionId,
       userId,
@@ -179,16 +183,16 @@ export class Lucia<
     return session;
   }
 
-  public async invalidateSession(sessionId: string): Promise<void> {
-    await this.adapter.deleteSession(sessionId);
+  public async invalidateSession(sessionId: string, schema?: string): Promise<void> {
+    await this.adapter.deleteSession(sessionId, schema);
   }
 
-  public async invalidateUserSessions(userId: UserId): Promise<void> {
-    await this.adapter.deleteUserSessions(userId);
+  public async invalidateUserSessions(userId: UserId, schema?: string): Promise<void> {
+    await this.adapter.deleteUserSessions(userId, schema);
   }
 
-  public async deleteExpiredSessions(): Promise<void> {
-    await this.adapter.deleteExpiredSessions();
+  public async deleteExpiredSessions(schema?: string): Promise<void> {
+    await this.adapter.deleteExpiredSessions(schema);
   }
 
   public readSessionCookie(cookieHeader: string): string | null {
